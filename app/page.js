@@ -102,7 +102,7 @@ export default function Home() {
 
       <section className="hero" id="accueil">
         <div className="hero-content">
-          <span className="eyebrow">L'ÉLÉGANCE AFRICAINE</span>
+          <span className="eyebrow">L&apos;ÉLÉGANCE AFRICAINE</span>
           <h1>
             Votre style,
             <br />
@@ -131,7 +131,7 @@ export default function Home() {
 
       <section className="intro" id="apropos">
         <span className="section-label">BIENVENUE CHEZ MARTHA</span>
-        <h2>L'élégance au cœur de la tradition</h2>
+        <h2>L&apos;élégance au cœur de la tradition</h2>
         <p>
           Des tenues modernes inspirées de la richesse des tissus
           africains. Exprimez votre personnalité avec Martha Fashion.
