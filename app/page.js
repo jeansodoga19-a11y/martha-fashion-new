@@ -1,101 +1,583 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
+
+const PHONE = "22891778843";
+
+function whatsappLink(product) {
+  const message = product
+    ? `Bonjour Martha Fashion, je souhaite commander : ${product.name}, au prix de ${Number(product.price).toLocaleString("fr-FR")} FCFA.`
+    : "Bonjour Martha Fashion, je souhaite découvrir vos créations.";
+
+  return `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.js
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [cartCount, setCartCount] = useState(0);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
+  useEffect(() => {
+    async function loadProducts() {
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setError("Impossible de charger les produits.");
+      } else {
+        setProducts(data || []);
+      }
+
+      setLoading(false);
+    }
+
+    loadProducts();
+
+    try {
+      const saved = JSON.parse(localStorage.getItem("martha-cart") || "[]");
+      setCartCount(
+        saved.reduce((sum, item) => sum + Number(item.quantity || 1), 0)
+      );
+    } catch {
+      setCartCount(0);
+    }
+  }, []);
+
+  function addToCart(product) {
+    try {
+      const cart = JSON.parse(localStorage.getItem("martha-cart") || "[]");
+
+      const existing = cart.find(item => item.id === product.id);
+
+      if (existing) {
+        existing.quantity = Number(existing.quantity || 1) + 1;
+      } else {
+        cart.push({
+          id: product.id,
+          name: product.name,
+          price: Number(product.price),
+          image: product.image,
+          quantity: 1
+        });
+      }
+
+      localStorage.setItem("martha-cart", JSON.stringify(cart));
+
+      setCartCount(
+        cart.reduce((sum, item) => sum + Number(item.quantity || 1), 0)
+      );
+
+      alert("Produit ajouté au panier !");
+    } catch (error) {
+      alert("Impossible d'ajouter ce produit au panier.");
+    }
+  }
+
+  return (
+    <main>
+      <header className="header">
+        <a href="#accueil" className="logo">
+          <span className="logo-mark">M</span>
+          <span>
+            MARTHA <strong>FASHION</strong>
+            <small>MODE & CRÉATIONS</small>
+          </span>
+        </a>
+
+        <nav>
+          <a href="#accueil">Accueil</a>
+          <a href="#boutique">Boutique</a>
+          <a href="#apropos">À propos</a>
+          <a href="#contact">Contact</a>
+        </nav>
+
+        <a className="header-button" href="/cart">
+          🛒 Panier ({cartCount})
+        </a>
+      </header>
+
+      <section className="hero" id="accueil">
+        <div className="hero-content">
+          <span className="eyebrow">L'ÉLÉGANCE AFRICAINE</span>
+          <h1>
+            Votre style,
+            <br />
+            notre <span>passion.</span>
+          </h1>
+          <p>
+            Découvrez des créations africaines uniques,
+            pensées pour révéler votre beauté et votre élégance.
+          </p>
+          <a className="gold-button" href="#boutique">
+            Découvrir la boutique →
           </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          <div className="hero-note">
+            <span>✦</span> Mode africaine • Créations originales
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
+
+        <div className="hero-decoration">
+          <div className="hero-circle">
+            <span>MARTHA</span>
+            <strong>FASHION</strong>
+            <small>BEAUTÉ • STYLE • ÉLÉGANCE</small>
+          </div>
+        </div>
+      </section>
+
+      <section className="intro" id="apropos">
+        <span className="section-label">BIENVENUE CHEZ MARTHA</span>
+        <h2>L'élégance au cœur de la tradition</h2>
+        <p>
+          Des tenues modernes inspirées de la richesse des tissus
+          africains. Exprimez votre personnalité avec Martha Fashion.
+        </p>
+      </section>
+
+      <section className="shop" id="boutique">
+        <div className="section-heading">
+          <div>
+            <span className="section-label">NOTRE SÉLECTION</span>
+            <h2>Nos créations</h2>
+          </div>
+          <span className="product-count">
+            {products.length.toString().padStart(2, "0")} ARTICLES
+          </span>
+        </div>
+
+        {loading && (
+          <p className="message">Chargement des créations...</p>
+        )}
+
+        {!loading && error && (
+          <p className="message error">{error}</p>
+        )}
+
+        {!loading && !error && products.length === 0 && (
+          <p className="message">Aucun produit disponible pour le moment.</p>
+        )}
+
+        {!loading && !error && products.length > 0 && (
+          <div className="products-grid">
+            {products.map((product) => (
+              <article className="product-card" key={product.id}>
+                <div className="product-image">
+                  {product.image ? (
+                    <img src={product.image} alt={product.name} />
+                  ) : (
+                    <div className="no-image">Photo indisponible</div>
+                  )}
+
+                  {product.tag && (
+                    <span className="product-tag">{product.tag}</span>
+                  )}
+                </div>
+
+                <div className="product-info">
+                  <h3>{product.name}</h3>
+
+                  <p className="price">
+                    {Number(product.price).toLocaleString("fr-FR")} FCFA
+                  </p>
+
+                  <button
+                    className="add-cart-button"
+                    onClick={() => addToCart(product)}
+                  >
+                    Ajouter au panier 🛒
+                  </button>
+
+                  <a
+                    className="order-button"
+                    href={whatsappLink(product)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Commander sur WhatsApp <span>↗</span>
+                  </a>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="contact" id="contact">
+        <span className="section-label">UNE COMMANDE ?</span>
+        <h2>Votre prochaine tenue vous attend.</h2>
+        <p>Contactez-nous directement pour commander vos créations.</p>
+
+        <a className="gold-button" href={whatsappLink()} target="_blank" rel="noopener noreferrer">
+          ✆ Appel et WhatsApp
         </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+
+        <p className="phone">+228 91 77 88 43</p>
+      </section>
+
+      <footer className="footer">
+        <div className="footer-logo">MARTHA FASHION</div>
+        <p>Mode & Créations • Lomé - Djagblé, Togo</p>
+        <p>Instagram : @martha.fashion</p>
+        <div className="copyright">
+          © {new Date().getFullYear()} Martha Fashion. Tous droits réservés.
+        </div>
       </footer>
-    </div>
+
+      <style jsx>{`
+        * { box-sizing: border-box; }
+
+        main {
+          background: #fffaf6;
+          color: #29201f;
+          font-family: Arial, sans-serif;
+          min-height: 100vh;
+        }
+
+        a { text-decoration: none; }
+
+        .header {
+          min-height: 82px;
+          padding: 15px 6%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          background: white;
+          border-bottom: 1px solid #f1e4dc;
+        }
+
+        .logo {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: #34201f;
+          font-weight: bold;
+          letter-spacing: 1px;
+        }
+
+        .logo-mark {
+          width: 44px;
+          height: 44px;
+          display: grid;
+          place-items: center;
+          background: #b87991;
+          color: white;
+          border-radius: 50%;
+          font-family: Georgia, serif;
+          font-size: 27px;
+        }
+
+        .logo small {
+          display: block;
+          color: #b18a47;
+          font-size: 9px;
+          margin-top: 5px;
+          letter-spacing: 2px;
+        }
+
+        nav { display: flex; gap: 28px; }
+        nav a { color: #493a36; font-size: 14px; }
+
+        .header-button {
+          background: #30201f;
+          color: white;
+          padding: 13px 22px;
+          border-radius: 25px;
+          font-size: 13px;
+          white-space: nowrap;
+        }
+
+        .hero {
+          min-height: 470px;
+          padding: 65px 9%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 30px;
+          background: linear-gradient(120deg, #f5e3e8, #fff4e7);
+        }
+
+        .hero-content { max-width: 550px; }
+
+        .eyebrow, .section-label {
+          color: #a77b39;
+          font-size: 11px;
+          font-weight: bold;
+          letter-spacing: 3px;
+        }
+
+        h1 {
+          font-family: Georgia, serif;
+          font-size: clamp(42px, 6vw, 70px);
+          line-height: 1.08;
+          margin: 20px 0;
+        }
+
+        h1 span { color: #b87991; font-style: italic; }
+
+        .hero-content > p {
+          color: #665854;
+          line-height: 1.8;
+          max-width: 440px;
+          font-size: 15px;
+        }
+
+        .gold-button {
+          display: inline-block;
+          background: #b68b4c;
+          color: white;
+          padding: 16px 26px;
+          border-radius: 30px;
+          margin-top: 18px;
+          font-weight: bold;
+          font-size: 14px;
+        }
+
+        .hero-note { margin-top: 25px; font-size: 12px; color: #806d64; }
+        .hero-note span { color: #b68b4c; }
+
+        .hero-decoration {
+          width: 300px;
+          height: 300px;
+          border-radius: 50%;
+          background: #b87991;
+          display: grid;
+          place-items: center;
+          border: 10px solid white;
+          box-shadow: 0 15px 40px #8d526033;
+          flex-shrink: 0;
+        }
+
+        .hero-circle {
+          text-align: center;
+          color: white;
+          font-family: Georgia, serif;
+        }
+
+        .hero-circle span, .hero-circle strong, .hero-circle small { display: block; }
+        .hero-circle span { letter-spacing: 5px; font-size: 17px; }
+        .hero-circle strong { font-size: 32px; margin: 8px 0; }
+
+        .hero-circle small {
+          font-family: Arial, sans-serif;
+          font-size: 9px;
+          letter-spacing: 2px;
+        }
+
+        .intro {
+          text-align: center;
+          padding: 65px 20px 35px;
+          max-width: 700px;
+          margin: auto;
+        }
+
+        h2 {
+          font-family: Georgia, serif;
+          font-size: clamp(27px, 4vw, 38px);
+          margin: 15px 0;
+        }
+
+        .intro p, .contact > p {
+          color: #786b66;
+          line-height: 1.8;
+          font-size: 14px;
+        }
+
+        .shop {
+          max-width: 1200px;
+          margin: auto;
+          padding: 40px 25px 80px;
+        }
+
+        .section-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 30px;
+        }
+
+        .product-count {
+          color: #a77b39;
+          font-size: 11px;
+          letter-spacing: 2px;
+        }
+
+        .products-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 25px;
+        }
+
+        .product-card {
+          background: white;
+          border-radius: 14px;
+          overflow: hidden;
+          box-shadow: 0 5px 22px #40241b0d;
+          transition: transform 0.2s;
+        }
+
+        .product-card:hover { transform: translateY(-5px); }
+
+        .product-image {
+          height: 290px;
+          position: relative;
+          background: #f0e6e1;
+          overflow: hidden;
+        }
+
+        .product-image img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        .no-image {
+          height: 100%;
+          display: grid;
+          place-items: center;
+          color: #806d64;
+          font-size: 13px;
+        }
+
+        .product-tag {
+          position: absolute;
+          top: 13px;
+          left: 13px;
+          background: white;
+          color: #9b713c;
+          padding: 7px 10px;
+          font-size: 9px;
+          letter-spacing: 1px;
+          border-radius: 20px;
+          font-weight: bold;
+        }
+
+        .product-info { padding: 19px; }
+
+        .product-info h3 {
+          font-family: Georgia, serif;
+          font-size: 19px;
+          margin: 0 0 10px;
+        }
+
+        .price {
+          color: #aa8044;
+          font-weight: bold;
+          font-size: 17px;
+          margin: 0 0 17px;
+        }
+
+        .add-cart-button {
+          width: 100%;
+          margin-bottom: 10px;
+          padding: 13px;
+          background: #b87991;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: bold;
+          cursor: pointer;
+        }
+
+        .order-button {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #30201f;
+          color: white;
+          padding: 13px 15px;
+          border-radius: 8px;
+          font-size: 12px;
+        }
+
+        .message {
+          text-align: center;
+          padding: 30px;
+          color: #786b66;
+        }
+
+        .error { color: #b42318; }
+
+        .contact {
+          text-align: center;
+          padding: 65px 20px;
+          background: #f4e4e9;
+        }
+
+        .phone { color: #60464d !important; font-weight: bold; }
+
+        .footer {
+          background: #291e1d;
+          color: white;
+          text-align: center;
+          padding: 40px 15px 20px;
+          font-size: 13px;
+        }
+
+        .footer-logo {
+          color: #d8b77d;
+          font-family: Georgia, serif;
+          font-size: 22px;
+          letter-spacing: 3px;
+        }
+
+        .footer p { color: #e1d2cc; }
+
+        .copyright {
+          border-top: 1px solid #594743;
+          margin-top: 25px;
+          padding-top: 18px;
+          color: #bbaaa4;
+          font-size: 11px;
+        }
+
+        @media (max-width: 750px) {
+          .header { padding: 13px 15px; flex-wrap: wrap; }
+          nav {
+            order: 3;
+            width: 100%;
+            justify-content: center;
+            gap: 20px;
+            overflow-x: auto;
+          }
+          nav a { font-size: 12px; white-space: nowrap; }
+          .header-button { padding: 11px 15px; font-size: 12px; }
+
+          .hero {
+            padding: 55px 22px;
+            flex-direction: column;
+            text-align: center;
+          }
+
+          .hero-content > p { margin-left: auto; margin-right: auto; }
+          .hero-decoration { width: 220px; height: 220px; }
+          .hero-circle strong { font-size: 25px; }
+
+          .products-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 13px;
+          }
+
+          .product-image { height: 210px; }
+          .product-info { padding: 12px; }
+          .product-info h3 { font-size: 15px; }
+          .price { font-size: 14px; }
+          .order-button { font-size: 10px; padding: 11px 9px; }
+          .shop { padding-left: 13px; padding-right: 13px; }
+        }
+
+        @media (max-width: 380px) {
+          .products-grid { grid-template-columns: 1fr; }
+          .product-image { height: 280px; }
+          .logo { font-size: 12px; }
+        }
+      `}</style>
+    </main>
   );
 }
