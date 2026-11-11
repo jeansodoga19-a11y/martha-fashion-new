@@ -2,7 +2,7 @@ const CACHE_NAME = "martha-fashion-v1";
 
 const APP_FILES = [
   "/",
-  "/manifest.webmanifest",
+  "/manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
