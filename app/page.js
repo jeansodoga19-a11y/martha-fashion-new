@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../lib/supabase";
 
 const PHONE = "22891778843";
@@ -11,6 +12,132 @@ function whatsappLink(product) {
     : "Bonjour Martha Fashion, je souhaite découvrir vos créations.";
 
   return `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
+}
+
+// Récupération des photos et vidéos d'un produit
+function getProductMedia(product) {
+  const images = Array.isArray(product.images)
+    ? product.images
+    : [];
+
+  const videos = Array.isArray(product.videos)
+    ? product.videos
+    : [];
+
+  const imageItems = images
+    .map((item) =>
+      typeof item === "string" ? item : item?.url
+    )
+    .filter(Boolean)
+    .map((url) => ({ type: "image", url }));
+
+  const videoItems = videos
+    .map((item) =>
+      typeof item === "string" ? item : item?.url
+    )
+    .filter(Boolean)
+    .map((url) => ({ type: "video", url }));
+
+  const allMedia = [...imageItems, ...videoItems];
+
+  // Compatibilité avec les anciens produits
+  if (allMedia.length === 0 && product.image) {
+    allMedia.push({
+      type: "image",
+      url: product.image,
+    });
+  }
+
+  return allMedia;
+}
+
+// Galerie photos et vidéos
+function ProductMedia({ product }) {
+  const media = getProductMedia(product);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [product.id]);
+
+  const currentMedia = media[activeIndex];
+
+  function previousMedia(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setActiveIndex((current) =>
+      current === 0 ? media.length - 1 : current - 1
+    );
+  }
+
+  function nextMedia(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setActiveIndex((current) =>
+      current === media.length - 1 ? 0 : current + 1
+    );
+  }
+
+  return (
+    <div className="product-image">
+      {currentMedia ? (
+        currentMedia.type === "video" ? (
+          <video
+            key={currentMedia.url}
+            src={currentMedia.url}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label={`Vidéo de ${product.name}`}
+          />
+        ) : (
+          <img
+            src={currentMedia.url}
+            alt={product.name}
+            loading="lazy"
+          />
+        )
+      ) : (
+        <div className="no-image">
+          Photo indisponible
+        </div>
+      )}
+
+      {product.tag && (
+        <span className="product-tag">
+          {product.tag}
+        </span>
+      )}
+
+      {media.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="media-arrow media-previous"
+            onClick={previousMedia}
+            aria-label="Média précédent"
+          >
+            ‹
+          </button>
+
+          <button
+            type="button"
+            className="media-arrow media-next"
+            onClick={nextMedia}
+            aria-label="Média suivant"
+          >
+            ›
+          </button>
+
+          <span className="media-counter">
+            {activeIndex + 1} / {media.length}
+          </span>
+        </>
+      )}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -27,6 +154,7 @@ export default function Home() {
         .order("created_at", { ascending: false });
 
       if (error) {
+        console.error("Erreur produits :", error);
         setError("Impossible de charger les produits.");
       } else {
         setProducts(data || []);
@@ -38,9 +166,15 @@ export default function Home() {
     loadProducts();
 
     try {
-      const saved = JSON.parse(localStorage.getItem("martha-cart") || "[]");
+      const saved = JSON.parse(
+        localStorage.getItem("martha-cart") || "[]"
+      );
+
       setCartCount(
-        saved.reduce((sum, item) => sum + Number(item.quantity || 1), 0)
+        saved.reduce(
+          (sum, item) => sum + Number(item.quantity || 1),
+          0
+        )
       );
     } catch {
       setCartCount(0);
@@ -49,30 +183,41 @@ export default function Home() {
 
   function addToCart(product) {
     try {
-      const cart = JSON.parse(localStorage.getItem("martha-cart") || "[]");
+      const cart = JSON.parse(
+        localStorage.getItem("martha-cart") || "[]"
+      );
 
-      const existing = cart.find(item => item.id === product.id);
+      const existing = cart.find(
+        (item) => item.id === product.id
+      );
 
       if (existing) {
-        existing.quantity = Number(existing.quantity || 1) + 1;
+        existing.quantity =
+          Number(existing.quantity || 1) + 1;
       } else {
         cart.push({
           id: product.id,
           name: product.name,
           price: Number(product.price),
           image: product.image,
-          quantity: 1
+          quantity: 1,
         });
       }
 
-      localStorage.setItem("martha-cart", JSON.stringify(cart));
+      localStorage.setItem(
+        "martha-cart",
+        JSON.stringify(cart)
+      );
 
       setCartCount(
-        cart.reduce((sum, item) => sum + Number(item.quantity || 1), 0)
+        cart.reduce(
+          (sum, item) => sum + Number(item.quantity || 1),
+          0
+        )
       );
 
       alert("Produit ajouté au panier !");
-    } catch (error) {
+    } catch {
       alert("Impossible d'ajouter ce produit au panier.");
     }
   }
@@ -95,26 +240,32 @@ export default function Home() {
           <a href="#contact">Contact</a>
         </nav>
 
-        <a className="header-button" href="/cart">
+        <Link className="header-button" href="/cart">
           🛒 Panier ({cartCount})
-        </a>
+        </Link>
       </header>
 
       <section className="hero" id="accueil">
         <div className="hero-content">
-          <span className="eyebrow">L&apos;ÉLÉGANCE AFRICAINE</span>
+          <span className="eyebrow">
+            L&apos;ÉLÉGANCE AFRICAINE
+          </span>
+
           <h1>
             Votre style,
             <br />
             notre <span>passion.</span>
           </h1>
+
           <p>
             Découvrez des créations africaines uniques,
             pensées pour révéler votre beauté et votre élégance.
           </p>
+
           <a className="gold-button" href="#boutique">
             Découvrir la boutique →
           </a>
+
           <div className="hero-note">
             <span>✦</span> Mode africaine • Créations originales
           </div>
@@ -130,8 +281,12 @@ export default function Home() {
       </section>
 
       <section className="intro" id="apropos">
-        <span className="section-label">BIENVENUE CHEZ MARTHA</span>
+        <span className="section-label">
+          BIENVENUE CHEZ MARTHA
+        </span>
+
         <h2>L&apos;élégance au cœur de la tradition</h2>
+
         <p>
           Des tenues modernes inspirées de la richesse des tissus
           africains. Exprimez votre personnalité avec Martha Fashion.
@@ -141,16 +296,22 @@ export default function Home() {
       <section className="shop" id="boutique">
         <div className="section-heading">
           <div>
-            <span className="section-label">NOTRE SÉLECTION</span>
+            <span className="section-label">
+              NOTRE SÉLECTION
+            </span>
+
             <h2>Nos créations</h2>
           </div>
+
           <span className="product-count">
             {products.length.toString().padStart(2, "0")} ARTICLES
           </span>
         </div>
 
         {loading && (
-          <p className="message">Chargement des créations...</p>
+          <p className="message">
+            Chargement des créations...
+          </p>
         )}
 
         {!loading && error && (
@@ -158,32 +319,43 @@ export default function Home() {
         )}
 
         {!loading && !error && products.length === 0 && (
-          <p className="message">Aucun produit disponible pour le moment.</p>
+          <p className="message">
+            Aucun produit disponible pour le moment.
+          </p>
         )}
 
         {!loading && !error && products.length > 0 && (
           <div className="products-grid">
             {products.map((product) => (
-              <article className="product-card" key={product.id}>
-                <div className="product-image">
-                  {product.image ? (
-                    <img src={product.image} alt={product.name} />
-                  ) : (
-                    <div className="no-image">Photo indisponible</div>
-                  )}
+              <article
+                className="product-card"
+                key={product.id}
+              >
+                <ProductMedia product={product} />
 
-                  {product.tag && (
-                    <span className="product-tag">{product.tag}</span>
-                  )}
-                </div>
+                <Link
+                  href={
+                    product.slug
+                      ? `/product/${encodeURIComponent(product.slug)}`
+                      : "#boutique"
+                  }
+                  className="product-link"
+                  aria-label={`Voir ${product.name}`}
+                >
+                  <div className="product-info">
+                    <h3>{product.name}</h3>
 
-                <div className="product-info">
-                  <h3>{product.name}</h3>
+                    <p className="price">
+                      {Number(product.price).toLocaleString("fr-FR")} FCFA
+                    </p>
 
-                  <p className="price">
-                    {Number(product.price).toLocaleString("fr-FR")} FCFA
-                  </p>
+                    <span className="view-product">
+                      Voir le produit →
+                    </span>
+                  </div>
+                </Link>
 
+                <div className="product-actions">
                   <button
                     className="add-cart-button"
                     onClick={() => addToCart(product)}
@@ -207,11 +379,22 @@ export default function Home() {
       </section>
 
       <section className="contact" id="contact">
-        <span className="section-label">UNE COMMANDE ?</span>
-        <h2>Votre prochaine tenue vous attend.</h2>
-        <p>Contactez-nous directement pour commander vos créations.</p>
+        <span className="section-label">
+          UNE COMMANDE ?
+        </span>
 
-        <a className="gold-button" href={whatsappLink()} target="_blank" rel="noopener noreferrer">
+        <h2>Votre prochaine tenue vous attend.</h2>
+
+        <p>
+          Contactez-nous directement pour commander vos créations.
+        </p>
+
+        <a
+          className="gold-button"
+          href={whatsappLink()}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           ✆ Appel et WhatsApp
         </a>
 
@@ -219,16 +402,23 @@ export default function Home() {
       </section>
 
       <footer className="footer">
-        <div className="footer-logo">MARTHA FASHION</div>
+        <div className="footer-logo">
+          MARTHA FASHION
+        </div>
+
         <p>Mode & Créations • Lomé - Djagblé, Togo</p>
         <p>Instagram : @martha.fashion</p>
+
         <div className="copyright">
-          © {new Date().getFullYear()} Martha Fashion. Tous droits réservés.
+          © {new Date().getFullYear()} Martha Fashion.
+          Tous droits réservés.
         </div>
       </footer>
 
       <style jsx>{`
-        * { box-sizing: border-box; }
+        * {
+          box-sizing: border-box;
+        }
 
         main {
           background: #fffaf6;
@@ -237,7 +427,9 @@ export default function Home() {
           min-height: 100vh;
         }
 
-        a { text-decoration: none; }
+        a {
+          text-decoration: none;
+        }
 
         .header {
           min-height: 82px;
@@ -279,8 +471,15 @@ export default function Home() {
           letter-spacing: 2px;
         }
 
-        nav { display: flex; gap: 28px; }
-        nav a { color: #493a36; font-size: 14px; }
+        nav {
+          display: flex;
+          gap: 28px;
+        }
+
+        nav a {
+          color: #493a36;
+          font-size: 14px;
+        }
 
         .header-button {
           background: #30201f;
@@ -301,9 +500,12 @@ export default function Home() {
           background: linear-gradient(120deg, #f5e3e8, #fff4e7);
         }
 
-        .hero-content { max-width: 550px; }
+        .hero-content {
+          max-width: 550px;
+        }
 
-        .eyebrow, .section-label {
+        .eyebrow,
+        .section-label {
           color: #a77b39;
           font-size: 11px;
           font-weight: bold;
@@ -317,7 +519,10 @@ export default function Home() {
           margin: 20px 0;
         }
 
-        h1 span { color: #b87991; font-style: italic; }
+        h1 span {
+          color: #b87991;
+          font-style: italic;
+        }
 
         .hero-content > p {
           color: #665854;
@@ -337,8 +542,15 @@ export default function Home() {
           font-size: 14px;
         }
 
-        .hero-note { margin-top: 25px; font-size: 12px; color: #806d64; }
-        .hero-note span { color: #b68b4c; }
+        .hero-note {
+          margin-top: 25px;
+          font-size: 12px;
+          color: #806d64;
+        }
+
+        .hero-note span {
+          color: #b68b4c;
+        }
 
         .hero-decoration {
           width: 300px;
@@ -358,9 +570,21 @@ export default function Home() {
           font-family: Georgia, serif;
         }
 
-        .hero-circle span, .hero-circle strong, .hero-circle small { display: block; }
-        .hero-circle span { letter-spacing: 5px; font-size: 17px; }
-        .hero-circle strong { font-size: 32px; margin: 8px 0; }
+        .hero-circle span,
+        .hero-circle strong,
+        .hero-circle small {
+          display: block;
+        }
+
+        .hero-circle span {
+          letter-spacing: 5px;
+          font-size: 17px;
+        }
+
+        .hero-circle strong {
+          font-size: 32px;
+          margin: 8px 0;
+        }
 
         .hero-circle small {
           font-family: Arial, sans-serif;
@@ -381,7 +605,8 @@ export default function Home() {
           margin: 15px 0;
         }
 
-        .intro p, .contact > p {
+        .intro p,
+        .contact > p {
           color: #786b66;
           line-height: 1.8;
           font-size: 14px;
@@ -420,7 +645,15 @@ export default function Home() {
           transition: transform 0.2s;
         }
 
-        .product-card:hover { transform: translateY(-5px); }
+        .product-card:hover {
+          transform: translateY(-5px);
+        }
+
+        .product-link {
+          display: block;
+          color: inherit;
+          text-decoration: none;
+        }
 
         .product-image {
           height: 290px;
@@ -429,11 +662,16 @@ export default function Home() {
           overflow: hidden;
         }
 
-        .product-image img {
+        .product-image img,
+        .product-image video {
           width: 100%;
           height: 100%;
           object-fit: cover;
           display: block;
+        }
+
+        .product-image video {
+          background: #000;
         }
 
         .no-image {
@@ -455,9 +693,48 @@ export default function Home() {
           letter-spacing: 1px;
           border-radius: 20px;
           font-weight: bold;
+          z-index: 2;
         }
 
-        .product-info { padding: 19px; }
+        .media-arrow {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 36px;
+          height: 36px;
+          border: none;
+          border-radius: 50%;
+          background: #ffffffdf;
+          color: #30201f;
+          font-size: 27px;
+          line-height: 1;
+          cursor: pointer;
+          z-index: 3;
+        }
+
+        .media-previous {
+          left: 10px;
+        }
+
+        .media-next {
+          right: 10px;
+        }
+
+        .media-counter {
+          position: absolute;
+          right: 10px;
+          bottom: 10px;
+          background: #30201fdd;
+          color: white;
+          border-radius: 20px;
+          padding: 5px 10px;
+          font-size: 11px;
+          z-index: 2;
+        }
+
+        .product-info {
+          padding: 19px;
+        }
 
         .product-info h3 {
           font-family: Georgia, serif;
@@ -469,7 +746,19 @@ export default function Home() {
           color: #aa8044;
           font-weight: bold;
           font-size: 17px;
-          margin: 0 0 17px;
+          margin: 0 0 12px;
+        }
+
+        .view-product {
+          display: inline-block;
+          color: #b87991;
+          font-size: 13px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+
+        .product-actions {
+          padding: 0 19px 19px;
         }
 
         .add-cart-button {
@@ -502,7 +791,9 @@ export default function Home() {
           color: #786b66;
         }
 
-        .error { color: #b42318; }
+        .error {
+          color: #b42318;
+        }
 
         .contact {
           text-align: center;
@@ -510,7 +801,10 @@ export default function Home() {
           background: #f4e4e9;
         }
 
-        .phone { color: #60464d !important; font-weight: bold; }
+        .phone {
+          color: #60464d !important;
+          font-weight: bold;
+        }
 
         .footer {
           background: #291e1d;
@@ -527,7 +821,9 @@ export default function Home() {
           letter-spacing: 3px;
         }
 
-        .footer p { color: #e1d2cc; }
+        .footer p {
+          color: #e1d2cc;
+        }
 
         .copyright {
           border-top: 1px solid #594743;
@@ -538,7 +834,11 @@ export default function Home() {
         }
 
         @media (max-width: 750px) {
-          .header { padding: 13px 15px; flex-wrap: wrap; }
+          .header {
+            padding: 13px 15px;
+            flex-wrap: wrap;
+          }
+
           nav {
             order: 3;
             width: 100%;
@@ -546,37 +846,21 @@ export default function Home() {
             gap: 20px;
             overflow-x: auto;
           }
-          nav a { font-size: 12px; white-space: nowrap; }
-          .header-button { padding: 11px 15px; font-size: 12px; }
+
+          nav a {
+            font-size: 12px;
+            white-space: nowrap;
+          }
+
+          .header-button {
+            padding: 11px 15px;
+            font-size: 12px;
+          }
 
           .hero {
             padding: 55px 22px;
             flex-direction: column;
-            text-align: center;
-          }
-
-          .hero-content > p { margin-left: auto; margin-right: auto; }
-          .hero-decoration { width: 220px; height: 220px; }
-          .hero-circle strong { font-size: 25px; }
-
-          .products-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 13px;
-          }
-
-          .product-image { height: 210px; }
-          .product-info { padding: 12px; }
-          .product-info h3 { font-size: 15px; }
-          .price { font-size: 14px; }
-          .order-button { font-size: 10px; padding: 11px 9px; }
-          .shop { padding-left: 13px; padding-right: 13px; }
-        }
-
-        @media (max-width: 380px) {
-          .products-grid { grid-template-columns: 1fr; }
-          .product-image { height: 280px; }
-          .logo { font-size: 12px; }
-        }
+            text-align: center;        }
       `}</style>
     </main>
   );
