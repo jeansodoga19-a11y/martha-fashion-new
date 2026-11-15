@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "../../../lib/supabase/client";
 
 const BUCKET = "martha-produicts";
 const ADMIN_UID = "574938b7-bcb1-44c3-b16b-5eb412c68452";
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MIN_VIDEO_SIZE = 3 * 1024 * 1024;
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
+
+const CATEGORIES = ["Femme", "Homme", "Enfant", "Accessoires"];
 
 export default function DashboardPage() {
   const [supabase] = useState(() => createClient());
@@ -25,33 +31,39 @@ export default function DashboardPage() {
   const [images, setImages] = useState([]);
   const [videos, setVideos] = useState([]);
 
+  const [imagePreviews, setImagePreviews] = useState([]);
+  const [videoPreviews, setVideoPreviews] = useState([]);
+
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function loadProducts() {
+  // Charger les produits depuis Supabase
+  const loadProducts = useCallback(async () => {
     const { data, error } = await supabase
       .from("products")
       .select("*")
       .order("created_at", { ascending: false });
 
     if (error) {
-      setMessage("Erreur : " + error.message);
-      return;
+      setMessage("Erreur de chargement : " + error.message);
+      return false;
     }
 
     setProducts(data || []);
-  }
+    return true;
+  }, [supabase]);
 
+  // Vérifier l'administrateur
   useEffect(() => {
+    let active = true;
+
     async function initialize() {
       const { data, error } = await supabase.auth.getUser();
 
-      if (
-        error ||
-        !data.user ||
-        data.user.id !== ADMIN_UID
-      ) {
+      if (!active) return;
+
+      if (error || !data.user || data.user.id !== ADMIN_UID) {
         router.replace("/admin");
         return;
       }
@@ -61,8 +73,13 @@ export default function DashboardPage() {
     }
 
     initialize();
-  }, []);
 
+    return () => {
+      active = false;
+    };
+  }, [supabase, router, loadProducts]);
+
+  // Normaliser les anciennes et nouvelles données média
   function normalizeMedia(value) {
     if (!Array.isArray(value)) return [];
 
@@ -74,6 +91,32 @@ export default function DashboardPage() {
       .filter(Boolean);
   }
 
+  // Prévisualiser les nouveaux fichiers sans créer de liens à chaque rendu
+  useEffect(() => {
+    const urls = imageFiles.map((file) =>
+      URL.createObjectURL(file)
+    );
+
+    setImagePreviews(urls);
+
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [imageFiles]);
+
+  useEffect(() => {
+    const urls = videoFiles.map((file) =>
+      URL.createObjectURL(file)
+    );
+
+    setVideoPreviews(urls);
+
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [videoFiles]);
+
+  // Sélection des photos
   function chooseImages(e) {
     const selected = Array.from(e.target.files || []);
 
@@ -83,7 +126,7 @@ export default function DashboardPage() {
       return;
     }
 
-    if (selected.some((file) => file.size > 5 * 1024 * 1024)) {
+    if (selected.some((file) => file.size > MAX_IMAGE_SIZE)) {
       setMessage("Chaque photo doit faire 5 Mo maximum.");
       e.target.value = "";
       return;
@@ -94,6 +137,7 @@ export default function DashboardPage() {
     e.target.value = "";
   }
 
+  // Sélection des vidéos
   function chooseVideos(e) {
     const selected = Array.from(e.target.files || []);
 
@@ -103,13 +147,13 @@ export default function DashboardPage() {
       return;
     }
 
-    if (selected.some((file) => file.size < 3 * 1024 * 1024)) {
+    if (selected.some((file) => file.size < MIN_VIDEO_SIZE)) {
       setMessage("Chaque vidéo doit faire au moins 3 Mo.");
       e.target.value = "";
       return;
     }
 
-    if (selected.some((file) => file.size > 50 * 1024 * 1024)) {
+    if (selected.some((file) => file.size > MAX_VIDEO_SIZE)) {
       setMessage("Chaque vidéo doit faire 50 Mo maximum.");
       e.target.value = "";
       return;
@@ -132,6 +176,7 @@ export default function DashboardPage() {
     );
   }
 
+  // Retrouver le chemin d'un fichier dans Supabase Storage
   function getStoragePath(url) {
     if (!url) return null;
 
@@ -150,6 +195,7 @@ export default function DashboardPage() {
     }
   }
 
+  // Envoyer les fichiers dans Supabase Storage
   async function uploadFiles(files, folder, uploadedFiles) {
     const urls = [];
 
@@ -163,6 +209,7 @@ export default function DashboardPage() {
         .from(BUCKET)
         .upload(fileName, file, {
           contentType: file.type,
+          cacheControl: "3600",
           upsert: false,
         });
 
@@ -180,12 +227,20 @@ export default function DashboardPage() {
     return urls;
   }
 
+  // Nettoyer uniquement les fichiers nouvellement envoyés
   async function cleanupUploaded(files) {
     if (!files.length) return;
 
-    await supabase.storage.from(BUCKET).remove(files);
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .remove(files);
+
+    if (error) {
+      console.error("Nettoyage Storage impossible :", error);
+    }
   }
 
+  // Réinitialiser le formulaire
   function resetForm() {
     setName("");
     setPrice("");
@@ -199,18 +254,26 @@ export default function DashboardPage() {
     setVideos([]);
 
     setEditingId(null);
+    setMessage("");
   }
 
+  // Préparer la modification d'un produit
   function editProduct(product) {
     setEditingId(product.id);
 
     setName(product.name || "");
-    setPrice(String(product.price || ""));
+    setPrice(String(product.price ?? ""));
     setDescription(product.description || "");
-    setCategory(product.category || "Femme");
+    setCategory(
+      CATEGORIES.includes(product.category)
+        ? product.category
+        : "Femme"
+    );
 
     const oldImages = normalizeMedia(
-      product.images?.length ? product.images : [product.image]
+      product.images?.length
+        ? product.images
+        : [product.image]
     );
 
     setImages(oldImages);
@@ -227,8 +290,11 @@ export default function DashboardPage() {
     });
   }
 
+  // Enregistrer ou modifier un produit
   async function saveProduct(e) {
     e.preventDefault();
+
+    if (loading) return;
 
     if (!name.trim() || !price) {
       setMessage("Remplis le nom et le prix.");
@@ -249,17 +315,20 @@ export default function DashboardPage() {
     }
 
     setLoading(true);
-    setMessage("");
+    setMessage("Enregistrement en cours...");
 
     const uploadedFiles = [];
+    let databaseSaved = false;
 
     try {
+      // Envoyer les nouvelles photos
       const newImages = await uploadFiles(
         imageFiles,
         "images",
         uploadedFiles
       );
 
+      // Envoyer les nouvelles vidéos
       const newVideos = await uploadFiles(
         videoFiles,
         "videos",
@@ -273,13 +342,21 @@ export default function DashboardPage() {
         name: name.trim(),
         description: description.trim() || null,
         price: Number(price),
+        category,
         image: finalImages[0],
         images: finalImages,
         videos: finalVideos,
-        category,
       };
 
       if (editingId) {
+        const currentProduct = products.find(
+          (product) => product.id === editingId
+        );
+
+        if (!currentProduct) {
+          throw new Error("Produit introuvable.");
+        }
+
         const { error } = await supabase
           .from("products")
           .update(productData)
@@ -287,14 +364,13 @@ export default function DashboardPage() {
 
         if (error) throw error;
 
-        const currentProduct = products.find(
-          (product) => product.id === editingId
-        );
+        databaseSaved = true;
 
+        // Identifier les anciens fichiers qui ne sont plus utilisés
         const oldMedia = [
-          ...normalizeMedia(currentProduct?.images),
-          currentProduct?.image,
-          ...normalizeMedia(currentProduct?.videos),
+          ...normalizeMedia(currentProduct.images),
+          currentProduct.image,
+          ...normalizeMedia(currentProduct.videos),
         ].filter(Boolean);
 
         const retainedMedia = [
@@ -311,21 +387,27 @@ export default function DashboardPage() {
           ),
         ];
 
+        let warning = "";
+
         if (removedPaths.length) {
           const { error: removeError } = await supabase.storage
             .from(BUCKET)
             .remove(removedPaths);
 
           if (removeError) {
-            setMessage(
-              "Produit modifié, mais certains anciens fichiers restent dans Storage."
-            );
+            console.error(removeError);
+            warning =
+              " Attention : certains anciens médias n'ont pas été supprimés.";
           }
         }
 
-        if (!message.startsWith("Produit modifié")) {
-          setMessage("Produit modifié avec succès !");
-        }
+        resetForm();
+        await loadProducts();
+
+        setMessage(
+          "Produit modifié avec succès !" + warning
+        );
+
       } else {
         const slug =
           name.trim()
@@ -351,29 +433,40 @@ export default function DashboardPage() {
 
         if (error) throw error;
 
+        databaseSaved = true;
+
+        resetForm();
+        await loadProducts();
+
         setMessage("Produit publié avec succès !");
       }
 
-      resetForm();
-      await loadProducts();
-
     } catch (error) {
-      await cleanupUploaded(uploadedFiles);
+      // Ne jamais supprimer les fichiers déjà associés
+      // à un produit enregistré avec succès
+      if (!databaseSaved) {
+        await cleanupUploaded(uploadedFiles);
+      }
 
       setMessage("Erreur : " + error.message);
+
     } finally {
       setLoading(false);
     }
   }
 
+  // Supprimer un produit
   async function deleteProduct(product) {
-    if (
-      !window.confirm(
-        `Supprimer définitivement ${product.name} ?`
-      )
-    ) return;
+    if (loading) return;
+
+    const confirmed = window.confirm(
+      `Supprimer définitivement ${product.name} ?`
+    );
+
+    if (!confirmed) return;
 
     setLoading(true);
+    setMessage("Suppression en cours...");
 
     try {
       const { error } = await supabase
@@ -383,6 +476,8 @@ export default function DashboardPage() {
 
       if (error) throw error;
 
+      // Le produit est supprimé de la base.
+      // On nettoie ensuite ses fichiers.
       const allMedia = [
         ...normalizeMedia(product.images),
         product.image,
@@ -390,7 +485,9 @@ export default function DashboardPage() {
       ].filter(Boolean);
 
       const paths = [
-        ...new Set(allMedia.map(getStoragePath).filter(Boolean)),
+        ...new Set(
+          allMedia.map(getStoragePath).filter(Boolean)
+        ),
       ];
 
       let warning = "";
@@ -401,24 +498,34 @@ export default function DashboardPage() {
           .remove(paths);
 
         if (removeError) {
-          warning = " Attention : certains fichiers restent dans Storage.";
+          console.error(removeError);
+          warning =
+            " Attention : certains fichiers restent dans Storage.";
         }
       }
 
-      if (editingId === product.id) resetForm();
+      if (editingId === product.id) {
+        resetForm();
+      }
+
+      await loadProducts();
 
       setMessage("Produit supprimé." + warning);
-      await loadProducts();
 
     } catch (error) {
       setMessage("Erreur : " + error.message);
+
     } finally {
       setLoading(false);
     }
   }
 
+  // Déconnexion
   async function logout() {
+    if (loading) return;
+
     await supabase.auth.signOut();
+
     router.replace("/admin");
     router.refresh();
   }
@@ -441,21 +548,31 @@ export default function DashboardPage() {
 
       <p>{products.length} produits enregistrés</p>
 
-      <button onClick={logout} style={logoutStyle}>
+      <button
+        type="button"
+        onClick={logout}
+        disabled={loading}
+        style={logoutStyle}
+      >
         Déconnexion
       </button>
 
       <form onSubmit={saveProduct} style={formStyle}>
         <h2>
-          {editingId ? "Modifier le produit" : "Ajouter un produit"}
+          {editingId
+            ? "Modifier le produit"
+            : "Ajouter un produit"}
         </h2>
 
-        <label>Photos du produit (5 Mo maximum chacune)</label>
+        <label>
+          Photos du produit (5 Mo maximum chacune)
+        </label>
 
         <input
           type="file"
           accept="image/*"
           multiple
+          disabled={loading}
           onChange={chooseImages}
           style={inputStyle}
         />
@@ -463,9 +580,15 @@ export default function DashboardPage() {
         <div style={mediaGridStyle}>
           {images.map((url, index) => (
             <div key={url} style={mediaItemStyle}>
-              <img src={url} alt="Photo produit" style={mediaStyle} />
+              <img
+                src={url}
+                alt="Photo produit"
+                style={mediaStyle}
+              />
+
               <button
                 type="button"
+                disabled={loading}
                 onClick={() =>
                   setImages((previous) =>
                     previous.filter((_, i) => i !== index)
@@ -479,14 +602,16 @@ export default function DashboardPage() {
           ))}
 
           {imageFiles.map((file, index) => (
-            <div key={index} style={mediaItemStyle}>
+            <div key={`${file.name}-${index}`} style={mediaItemStyle}>
               <img
-                src={URL.createObjectURL(file)}
+                src={imagePreviews[index]}
                 alt="Nouvelle photo"
                 style={mediaStyle}
               />
+
               <button
                 type="button"
+                disabled={loading}
                 onClick={() => removeNewImage(index)}
                 style={smallDeleteStyle}
               >
@@ -504,6 +629,7 @@ export default function DashboardPage() {
           type="file"
           accept="video/*"
           multiple
+          disabled={loading}
           onChange={chooseVideos}
           style={inputStyle}
         />
@@ -513,11 +639,16 @@ export default function DashboardPage() {
             <video
               src={url}
               controls
-              style={{ width: "100%", maxHeight: 220 }}
+              preload="metadata"
+              style={{
+                width: "100%",
+                maxHeight: 220,
+              }}
             />
 
             <button
               type="button"
+              disabled={loading}
               onClick={() =>
                 setVideos((previous) =>
                   previous.filter((_, i) => i !== index)
@@ -531,11 +662,25 @@ export default function DashboardPage() {
         ))}
 
         {videoFiles.map((file, index) => (
-          <div key={index} style={videoItemStyle}>
-            <p>{file.name} ({(file.size / 1024 / 1024).toFixed(1)} Mo)</p>
+          <div key={`${file.name}-${index}`} style={videoItemStyle}>
+            <video
+              src={videoPreviews[index]}
+              controls
+              preload="metadata"
+              style={{
+                width: "100%",
+                maxHeight: 220,
+              }}
+            />
+
+            <p>
+              {file.name} (
+              {(file.size / 1024 / 1024).toFixed(1)} Mo)
+            </p>
 
             <button
               type="button"
+              disabled={loading}
               onClick={() => removeNewVideo(index)}
               style={smallDeleteStyle}
             >
@@ -544,40 +689,65 @@ export default function DashboardPage() {
           </div>
         ))}
 
+        <label>Nom du produit</label>
+
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Nom du produit"
+          disabled={loading}
           style={inputStyle}
         />
 
+        <label>Prix en FCFA</label>
+
         <input
           type="number"
+          min="1"
+          step="1"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
           placeholder="Prix en FCFA"
+          disabled={loading}
           style={inputStyle}
         />
+
+        <label>Catégorie</label>
 
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
+          disabled={loading}
           style={inputStyle}
         >
-          <option>Femme</option>
-          <option>Homme</option>
-          <option>Enfant</option>
-          <option>Accessoires</option>
+          {CATEGORIES.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
         </select>
+
+        <label>Description</label>
 
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Description du produit"
-          style={{ ...inputStyle, minHeight: 100 }}
+          disabled={loading}
+          style={{
+            ...inputStyle,
+            minHeight: 100,
+          }}
         />
 
-        <button disabled={loading} style={publishStyle}>
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            ...publishStyle,
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
           {loading
             ? "Enregistrement..."
             : editingId
@@ -588,6 +758,7 @@ export default function DashboardPage() {
         {editingId && (
           <button
             type="button"
+            disabled={loading}
             onClick={resetForm}
             style={logoutStyle}
           >
@@ -595,10 +766,26 @@ export default function DashboardPage() {
           </button>
         )}
 
-        {message && <p>{message}</p>}
+        {message && (
+          <p
+            role="status"
+            style={{
+              padding: 10,
+              background: "#fff4e5",
+              borderRadius: 8,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {message}
+          </p>
+        )}
       </form>
 
       <h2>Mes produits</h2>
+
+      {products.length === 0 && (
+        <p>Aucun produit enregistré.</p>
+      )}
 
       {products.map((product) => (
         <div key={product.id} style={productStyle}>
@@ -610,13 +797,24 @@ export default function DashboardPage() {
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <strong>{product.name}</strong>
-            <p>{product.price} FCFA</p>
+
             <p>
-              {normalizeMedia(product.images).length} photos ·{" "}
+              {Number(product.price).toLocaleString("fr-FR")} FCFA
+            </p>
+
+            <p>
+              {normalizeMedia(
+                product.images?.length
+                  ? product.images
+                  : [product.image]
+              ).length}{" "}
+              photos ·{" "}
               {normalizeMedia(product.videos).length} vidéos
             </p>
 
             <button
+              type="button"
+              disabled={loading}
               onClick={() => editProduct(product)}
               style={editStyle}
             >
@@ -624,6 +822,7 @@ export default function DashboardPage() {
             </button>
 
             <button
+              type="button"
               disabled={loading}
               onClick={() => deleteProduct(product)}
               style={deleteStyle}
@@ -637,13 +836,17 @@ export default function DashboardPage() {
   );
 }
 
+// STYLES
+
+
 const mainStyle = {
   maxWidth: 750,
   margin: "auto",
   padding: 20,
-  fontFamily: "Arial",
+  fontFamily: "Arial, sans-serif",
   background: "#FFFBF5",
   minHeight: "100vh",
+  boxSizing: "border-box",
 };
 
 const formStyle = {
@@ -682,6 +885,7 @@ const logoutStyle = {
   border: "1px solid #9B6B24",
   borderRadius: 8,
   background: "white",
+  cursor: "pointer",
 };
 
 const productStyle = {
@@ -725,6 +929,7 @@ const videoItemStyle = {
   padding: 10,
   margin: "10px 0",
   borderRadius: 8,
+  overflow: "hidden",
 };
 
 const smallDeleteStyle = {

@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../lib/supabase";
 
+import {
+  saveOfflineProducts,
+  getOfflineProducts,
+} from "../lib/offline-db";
+
 const PHONE = "22891778843";
 
 function whatsappLink(product) {
@@ -14,44 +19,29 @@ function whatsappLink(product) {
   return `https://wa.me/${PHONE}?text=${encodeURIComponent(message)}`;
 }
 
-// Récupération des photos et vidéos d'un produit
 function getProductMedia(product) {
-  const images = Array.isArray(product.images)
-    ? product.images
-    : [];
-
-  const videos = Array.isArray(product.videos)
-    ? product.videos
-    : [];
+  const images = Array.isArray(product.images) ? product.images : [];
+  const videos = Array.isArray(product.videos) ? product.videos : [];
 
   const imageItems = images
-    .map((item) =>
-      typeof item === "string" ? item : item?.url
-    )
+    .map((item) => typeof item === "string" ? item : item?.url)
     .filter(Boolean)
     .map((url) => ({ type: "image", url }));
 
   const videoItems = videos
-    .map((item) =>
-      typeof item === "string" ? item : item?.url
-    )
+    .map((item) => typeof item === "string" ? item : item?.url)
     .filter(Boolean)
     .map((url) => ({ type: "video", url }));
 
   const allMedia = [...imageItems, ...videoItems];
 
-  // Compatibilité avec les anciens produits
   if (allMedia.length === 0 && product.image) {
-    allMedia.push({
-      type: "image",
-      url: product.image,
-    });
+    allMedia.push({ type: "image", url: product.image });
   }
 
   return allMedia;
 }
 
-// Galerie photos et vidéos
 function ProductMedia({ product }) {
   const media = getProductMedia(product);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -65,7 +55,6 @@ function ProductMedia({ product }) {
   function previousMedia(event) {
     event.preventDefault();
     event.stopPropagation();
-
     setActiveIndex((current) =>
       current === 0 ? media.length - 1 : current - 1
     );
@@ -74,14 +63,13 @@ function ProductMedia({ product }) {
   function nextMedia(event) {
     event.preventDefault();
     event.stopPropagation();
-
     setActiveIndex((current) =>
       current === media.length - 1 ? 0 : current + 1
     );
   }
 
   return (
-    <div className="product-image">
+    <div className="product-media">
       {currentMedia ? (
         currentMedia.type === "video" ? (
           <video
@@ -100,15 +88,11 @@ function ProductMedia({ product }) {
           />
         )
       ) : (
-        <div className="no-image">
-          Photo indisponible
-        </div>
+        <div className="no-image">Photo indisponible</div>
       )}
 
       {product.tag && (
-        <span className="product-tag">
-          {product.tag}
-        </span>
+        <span className="product-tag">{product.tag}</span>
       )}
 
       {media.length > 1 && (
@@ -145,723 +129,697 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cartCount, setCartCount] = useState(0);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
+    let active = true;
+
     async function loadProducts() {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: false });
+      try {
+        setIsOffline(!navigator.onLine);
 
-      if (error) {
-        console.error("Erreur produits :", error);
-        setError("Impossible de charger les produits.");
-      } else {
-        setProducts(data || []);
+        const offlineProducts = await getOfflineProducts();
+
+        if (active && offlineProducts?.length > 0) {
+          setProducts(offlineProducts);
+          setLoading(false);
+        }
+
+        if (!navigator.onLine) {
+          if (active && (!offlineProducts || offlineProducts.length === 0)) {
+            setError("Aucun produit enregistré. Connectez-vous à Internet pour charger le catalogue.");
+          }
+          return;
+        }
+
+        const { data, error: supabaseError } = await supabase
+          .from("products")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (supabaseError) throw supabaseError;
+
+        if (active && data) {
+          setProducts(data);
+          setError("");
+          await saveOfflineProducts(data);
+        }
+      } catch (err) {
+        console.error("Erreur de chargement :", err);
+        if (active && products.length === 0) {
+          setError("Impossible de charger les produits. Vérifiez votre connexion Internet.");
+        }
+      } finally {
+        if (active) setLoading(false);
       }
-
-      setLoading(false);
     }
 
     loadProducts();
 
+    function handleOnline() {
+      setIsOffline(false);
+      loadProducts();
+    }
+
+    function handleOffline() {
+      setIsOffline(true);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
     try {
-      const saved = JSON.parse(
+      const savedCart = JSON.parse(
         localStorage.getItem("martha-cart") || "[]"
       );
-
-      setCartCount(
-        saved.reduce(
-          (sum, item) => sum + Number(item.quantity || 1),
-          0
-        )
+      const count = savedCart.reduce(
+        (total, item) => total + Number(item.quantity || 1),
+        0
       );
-    } catch {
-      setCartCount(0);
+      setCartCount(count);
+    } catch (err) {
+      console.error("Erreur de lecture du panier :", err);
     }
+
+    return () => {
+      active = false;
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
   }, []);
 
   function addToCart(product) {
     try {
-      const cart = JSON.parse(
+      const savedCart = JSON.parse(
         localStorage.getItem("martha-cart") || "[]"
       );
 
-      const existing = cart.find(
+      const existingIndex = savedCart.findIndex(
         (item) => item.id === product.id
       );
 
-      if (existing) {
-        existing.quantity =
-          Number(existing.quantity || 1) + 1;
+      if (existingIndex >= 0) {
+        savedCart[existingIndex].quantity =
+          Number(savedCart[existingIndex].quantity || 1) + 1;
       } else {
-        cart.push({
+        savedCart.push({
           id: product.id,
           name: product.name,
-          price: Number(product.price),
+          price: product.price,
           image: product.image,
           quantity: 1,
         });
       }
 
-      localStorage.setItem(
-        "martha-cart",
-        JSON.stringify(cart)
-      );
+      localStorage.setItem("martha-cart", JSON.stringify(savedCart));
 
       setCartCount(
-        cart.reduce(
-          (sum, item) => sum + Number(item.quantity || 1),
+        savedCart.reduce(
+          (total, item) => total + Number(item.quantity || 1),
           0
         )
       );
 
       alert("Produit ajouté au panier !");
-    } catch {
+    } catch (err) {
+      console.error("Erreur panier :", err);
       alert("Impossible d'ajouter ce produit au panier.");
     }
   }
 
   return (
-    <main>
-      <header className="header">
-        <a href="#accueil" className="logo">
-          <span className="logo-mark">M</span>
-          <span>
-            MARTHA <strong>FASHION</strong>
-            <small>MODE & CRÉATIONS</small>
-          </span>
-        </a>
-
-        <nav>
-          <a href="#accueil">Accueil</a>
-          <a href="#boutique">Boutique</a>
-          <a href="#apropos">À propos</a>
-          <a href="#contact">Contact</a>
-        </nav>
-
-        <Link className="header-button" href="/cart">
-          🛒 Panier ({cartCount})
-        </Link>
-      </header>
-
-      <section className="hero" id="accueil">
-        <div className="hero-content">
-          <span className="eyebrow">
-            L&apos;ÉLÉGANCE AFRICAINE
-          </span>
-
-          <h1>
-            Votre style,
-            <br />
-            notre <span>passion.</span>
-          </h1>
-
-          <p>
-            Découvrez des créations africaines uniques,
-            pensées pour révéler votre beauté et votre élégance.
-          </p>
-
-          <a className="gold-button" href="#boutique">
-            Découvrir la boutique →
-          </a>
-
-          <div className="hero-note">
-            <span>✦</span> Mode africaine • Créations originales
-          </div>
-        </div>
-
-        <div className="hero-decoration">
-          <div className="hero-circle">
-            <span>MARTHA</span>
-            <strong>FASHION</strong>
-            <small>BEAUTÉ • STYLE • ÉLÉGANCE</small>
-          </div>
-        </div>
-      </section>
-
-      <section className="intro" id="apropos">
-        <span className="section-label">
-          BIENVENUE CHEZ MARTHA
-        </span>
-
-        <h2>L&apos;élégance au cœur de la tradition</h2>
-
-        <p>
-          Des tenues modernes inspirées de la richesse des tissus
-          africains. Exprimez votre personnalité avec Martha Fashion.
-        </p>
-      </section>
-
-      <section className="shop" id="boutique">
-        <div className="section-heading">
-          <div>
-            <span className="section-label">
-              NOTRE SÉLECTION
+    <>
+      <style jsx global>{styles}</style>
+      <div className="site-container">
+        <header className="header">
+          <Link href="/" className="logo">
+            <span className="logo-icon">M</span>
+            <span>
+              <strong>MARTHA FASHION</strong>
+              <small>Mode & Créations</small>
             </span>
+          </Link>
 
-            <h2>Nos créations</h2>
+          <nav>
+            <Link href="/">Accueil</Link>
+            <a href="#boutique">Boutique</a>
+            <a href="#contact">Contact</a>
+          </nav>
+
+          <Link href="/cart" className="header-button">
+            Panier ({cartCount})
+          </Link>
+        </header>
+
+        {isOffline && (
+          <div className="offline-banner">
+            Vous êtes hors connexion. Catalogue enregistré disponible.
           </div>
-
-          <span className="product-count">
-            {products.length.toString().padStart(2, "0")} ARTICLES
-          </span>
-        </div>
-
-        {loading && (
-          <p className="message">
-            Chargement des créations...
-          </p>
         )}
 
-        {!loading && error && (
-          <p className="message error">{error}</p>
-        )}
+        <main>
+          <section className="hero">
+            <div className="hero-content">
+              <span className="eyebrow">L&rsquo;élégance africaine</span>
+              <h1>Votre style, notre passion.</h1>
+              <p>
+                Découvrez les créations Martha Fashion et affirmez votre
+                élégance avec des tenues uniques.
+              </p>
+              <a href="#boutique" className="primary-button">
+                Découvrir la boutique
+              </a>
+            </div>
 
-        {!loading && !error && products.length === 0 && (
-          <p className="message">
-            Aucun produit disponible pour le moment.
-          </p>
-        )}
+            <div className="hero-decoration">
+              <span>MF</span>
+              <p>Élégance • Style • Créativité</p>
+            </div>
+          </section>
 
-        {!loading && !error && products.length > 0 && (
-          <div className="products-grid">
-            {products.map((product) => (
-              <article
-                className="product-card"
-                key={product.id}
-              >
-                <ProductMedia product={product} />
+          <section className="intro">
+            <span className="eyebrow">Bienvenue chez nous</span>
+            <h2>MARTHA FASHION</h2>
+            <p>
+              Des créations inspirées de la richesse des tissus africains,
+              pensées pour révéler votre personnalité.
+            </p>
+          </section>
 
-                <Link
-                  href={
-                    product.slug
-                      ? `/product/${encodeURIComponent(product.slug)}`
-                      : "#boutique"
-                  }
-                  className="product-link"
-                  aria-label={`Voir ${product.name}`}
-                >
+          <section className="shop-section" id="boutique">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">Notre collection</span>
+                <h2>Nos créations</h2>
+              </div>
+
+              <span className="product-count">
+                {products.length} produit(s)
+              </span>
+            </div>
+
+            {loading && (
+              <p className="status-message">Chargement des créations...</p>
+            )}
+
+            {!loading && error && (
+              <p className="status-message error-message">{error}</p>
+            )}
+
+            {!loading && !error && products.length === 0 && (
+              <p className="status-message">
+                Aucun produit disponible pour le moment.
+              </p>
+            )}
+
+            <div className="products-grid">
+              {products.map((product) => (
+                <article className="product-card" key={product.id}>
+                  <ProductMedia product={product} />
+
                   <div className="product-info">
+                    <span className="product-category">
+                      {product.category || "Collection"}
+                    </span>
+
                     <h3>{product.name}</h3>
 
-                    <p className="price">
+                    {product.description && (
+                      <p className="product-description">
+                        {product.description}
+                      </p>
+                    )}
+
+                    <div className="product-price">
                       {Number(product.price).toLocaleString("fr-FR")} FCFA
-                    </p>
+                    </div>
 
-                    <span className="view-product">
-                      Voir le produit →
-                    </span>
+                    {product.old_price > 0 && (
+                      <div className="old-price">
+                        {Number(product.old_price).toLocaleString("fr-FR")} FCFA
+                      </div>
+                    )}
+
+                    <button
+                      className="primary-button add-cart-button"
+                      onClick={() => addToCart(product)}
+                    >
+                      Ajouter au panier
+                    </button>
+
+                    <a
+                      className="whatsapp-button"
+                      href={whatsappLink(product)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Commander sur WhatsApp
+                    </a>
                   </div>
-                </Link>
+                </article>
+              ))}
+            </div>
+          </section>
 
-                <div className="product-actions">
-                  <button
-                    className="add-cart-button"
-                    onClick={() => addToCart(product)}
-                  >
-                    Ajouter au panier 🛒
-                  </button>
+          <section className="contact-section" id="contact">
+            <span className="eyebrow">Restons en contact</span>
+            <h2>Une création vous intéresse ?</h2>
+            <p>
+              Contactez Martha Fashion pour vos commandes et renseignements.
+            </p>
 
-                  <a
-                    className="order-button"
-                    href={whatsappLink(product)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Commander sur WhatsApp <span>↗</span>
-                  </a>
-                </div>
-              </article>
-            ))}
+            <a
+              href={whatsappLink(null)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="primary-button"
+            >
+              Nous contacter sur WhatsApp
+            </a>
+          </section>
+        </main>
+
+        <footer className="footer">
+          <div>
+            <strong>MARTHA FASHION</strong>
+            <p>Mode & Créations</p>
           </div>
-        )}
-      </section>
 
-      <section className="contact" id="contact">
-        <span className="section-label">
-          UNE COMMANDE ?
-        </span>
-
-        <h2>Votre prochaine tenue vous attend.</h2>
-
-        <p>
-          Contactez-nous directement pour commander vos créations.
-        </p>
-
-        <a
-          className="gold-button"
-          href={whatsappLink()}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          ✆ Appel et WhatsApp
-        </a>
-
-        <p className="phone">+228 91 77 88 43</p>
-      </section>
-
-      <footer className="footer">
-        <div className="footer-logo">
-          MARTHA FASHION
-        </div>
-
-        <p>Mode & Créations • Lomé - Djagblé, Togo</p>
-        <p>Instagram : @martha.fashion</p>
-
-        <div className="copyright">
-          © {new Date().getFullYear()} Martha Fashion.
-          Tous droits réservés.
-        </div>
-      </footer>
-
-      <style jsx>{`
-        * {
-          box-sizing: border-box;
-        }
-
-        main {
-          background: #fffaf6;
-          color: #29201f;
-          font-family: Arial, sans-serif;
-          min-height: 100vh;
-        }
-
-        a {
-          text-decoration: none;
-        }
-
-        .header {
-          min-height: 82px;
-          padding: 15px 6%;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-          background: white;
-          border-bottom: 1px solid #f1e4dc;
-        }
-
-        .logo {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          color: #34201f;
-          font-weight: bold;
-          letter-spacing: 1px;
-        }
-
-        .logo-mark {
-          width: 44px;
-          height: 44px;
-          display: grid;
-          place-items: center;
-          background: #b87991;
-          color: white;
-          border-radius: 50%;
-          font-family: Georgia, serif;
-          font-size: 27px;
-        }
-
-        .logo small {
-          display: block;
-          color: #b18a47;
-          font-size: 9px;
-          margin-top: 5px;
-          letter-spacing: 2px;
-        }
-
-        nav {
-          display: flex;
-          gap: 28px;
-        }
-
-        nav a {
-          color: #493a36;
-          font-size: 14px;
-        }
-
-        .header-button {
-          background: #30201f;
-          color: white;
-          padding: 13px 22px;
-          border-radius: 25px;
-          font-size: 13px;
-          white-space: nowrap;
-        }
-
-        .hero {
-          min-height: 470px;
-          padding: 65px 9%;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 30px;
-          background: linear-gradient(120deg, #f5e3e8, #fff4e7);
-        }
-
-        .hero-content {
-          max-width: 550px;
-        }
-
-        .eyebrow,
-        .section-label {
-          color: #a77b39;
-          font-size: 11px;
-          font-weight: bold;
-          letter-spacing: 3px;
-        }
-
-        h1 {
-          font-family: Georgia, serif;
-          font-size: clamp(42px, 6vw, 70px);
-          line-height: 1.08;
-          margin: 20px 0;
-        }
-
-        h1 span {
-          color: #b87991;
-          font-style: italic;
-        }
-
-        .hero-content > p {
-          color: #665854;
-          line-height: 1.8;
-          max-width: 440px;
-          font-size: 15px;
-        }
-
-        .gold-button {
-          display: inline-block;
-          background: #b68b4c;
-          color: white;
-          padding: 16px 26px;
-          border-radius: 30px;
-          margin-top: 18px;
-          font-weight: bold;
-          font-size: 14px;
-        }
-
-        .hero-note {
-          margin-top: 25px;
-          font-size: 12px;
-          color: #806d64;
-        }
-
-        .hero-note span {
-          color: #b68b4c;
-        }
-
-        .hero-decoration {
-          width: 300px;
-          height: 300px;
-          border-radius: 50%;
-          background: #b87991;
-          display: grid;
-          place-items: center;
-          border: 10px solid white;
-          box-shadow: 0 15px 40px #8d526033;
-          flex-shrink: 0;
-        }
-
-        .hero-circle {
-          text-align: center;
-          color: white;
-          font-family: Georgia, serif;
-        }
-
-        .hero-circle span,
-        .hero-circle strong,
-        .hero-circle small {
-          display: block;
-        }
-
-        .hero-circle span {
-          letter-spacing: 5px;
-          font-size: 17px;
-        }
-
-        .hero-circle strong {
-          font-size: 32px;
-          margin: 8px 0;
-        }
-
-        .hero-circle small {
-          font-family: Arial, sans-serif;
-          font-size: 9px;
-          letter-spacing: 2px;
-        }
-
-        .intro {
-          text-align: center;
-          padding: 65px 20px 35px;
-          max-width: 700px;
-          margin: auto;
-        }
-
-        h2 {
-          font-family: Georgia, serif;
-          font-size: clamp(27px, 4vw, 38px);
-          margin: 15px 0;
-        }
-
-        .intro p,
-        .contact > p {
-          color: #786b66;
-          line-height: 1.8;
-          font-size: 14px;
-        }
-
-        .shop {
-          max-width: 1200px;
-          margin: auto;
-          padding: 40px 25px 80px;
-        }
-
-        .section-heading {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 30px;
-        }
-
-        .product-count {
-          color: #a77b39;
-          font-size: 11px;
-          letter-spacing: 2px;
-        }
-
-        .products-grid {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 25px;
-        }
-
-        .product-card {
-          background: white;
-          border-radius: 14px;
-          overflow: hidden;
-          box-shadow: 0 5px 22px #40241b0d;
-          transition: transform 0.2s;
-        }
-
-        .product-card:hover {
-          transform: translateY(-5px);
-        }
-
-        .product-link {
-          display: block;
-          color: inherit;
-          text-decoration: none;
-        }
-
-        .product-image {
-          height: 290px;
-          position: relative;
-          background: #f0e6e1;
-          overflow: hidden;
-        }
-
-        .product-image img,
-        .product-image video {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          display: block;
-        }
-
-        .product-image video {
-          background: #000;
-        }
-
-        .no-image {
-          height: 100%;
-          display: grid;
-          place-items: center;
-          color: #806d64;
-          font-size: 13px;
-        }
-
-        .product-tag {
-          position: absolute;
-          top: 13px;
-          left: 13px;
-          background: white;
-          color: #9b713c;
-          padding: 7px 10px;
-          font-size: 9px;
-          letter-spacing: 1px;
-          border-radius: 20px;
-          font-weight: bold;
-          z-index: 2;
-        }
-
-        .media-arrow {
-          position: absolute;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 36px;
-          height: 36px;
-          border: none;
-          border-radius: 50%;
-          background: #ffffffdf;
-          color: #30201f;
-          font-size: 27px;
-          line-height: 1;
-          cursor: pointer;
-          z-index: 3;
-        }
-
-        .media-previous {
-          left: 10px;
-        }
-
-        .media-next {
-          right: 10px;
-        }
-
-        .media-counter {
-          position: absolute;
-          right: 10px;
-          bottom: 10px;
-          background: #30201fdd;
-          color: white;
-          border-radius: 20px;
-          padding: 5px 10px;
-          font-size: 11px;
-          z-index: 2;
-        }
-
-        .product-info {
-          padding: 19px;
-        }
-
-        .product-info h3 {
-          font-family: Georgia, serif;
-          font-size: 19px;
-          margin: 0 0 10px;
-        }
-
-        .price {
-          color: #aa8044;
-          font-weight: bold;
-          font-size: 17px;
-          margin: 0 0 12px;
-        }
-
-        .view-product {
-          display: inline-block;
-          color: #b87991;
-          font-size: 13px;
-          font-weight: bold;
-          margin-bottom: 5px;
-        }
-
-        .product-actions {
-          padding: 0 19px 19px;
-        }
-
-        .add-cart-button {
-          width: 100%;
-          margin-bottom: 10px;
-          padding: 13px;
-          background: #b87991;
-          color: white;
-          border: none;
-          border-radius: 8px;
-          font-size: 13px;
-          font-weight: bold;
-          cursor: pointer;
-        }
-
-        .order-button {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          background: #30201f;
-          color: white;
-          padding: 13px 15px;
-          border-radius: 8px;
-          font-size: 12px;
-        }
-
-        .message {
-          text-align: center;
-          padding: 30px;
-          color: #786b66;
-        }
-
-        .error {
-          color: #b42318;
-        }
-
-        .contact {
-          text-align: center;
-          padding: 65px 20px;
-          background: #f4e4e9;
-        }
-
-        .phone {
-          color: #60464d !important;
-          font-weight: bold;
-        }
-
-        .footer {
-          background: #291e1d;
-          color: white;
-          text-align: center;
-          padding: 40px 15px 20px;
-          font-size: 13px;
-        }
-
-        .footer-logo {
-          color: #d8b77d;
-          font-family: Georgia, serif;
-          font-size: 22px;
-          letter-spacing: 3px;
-        }
-
-        .footer p {
-          color: #e1d2cc;
-        }
-
-        .copyright {
-          border-top: 1px solid #594743;
-          margin-top: 25px;
-          padding-top: 18px;
-          color: #bbaaa4;
-          font-size: 11px;
-        }
-
-        @media (max-width: 750px) {
-          .header {
-            padding: 13px 15px;
-            flex-wrap: wrap;
-          }
-
-          nav {
-            order: 3;
-            width: 100%;
-            justify-content: center;
-            gap: 20px;
-            overflow-x: auto;
-          }
-
-          nav a {
-            font-size: 12px;
-            white-space: nowrap;
-          }
-
-          .header-button {
-            padding: 11px 15px;
-            font-size: 12px;
-          }
-
-          .hero {
-            padding: 55px 22px;
-            flex-direction: column;
-            text-align: center;        }
-      `}</style>
-    </main>
+          <p>Lomé - Djagblé, Togo</p>
+
+          <p>Appel et WhatsApp : +228 91 77 88 43</p>
+
+          <p>
+            Instagram :{" "}
+            <a
+              href="https://www.instagram.com/martha.fashion/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              @martha.fashion
+            </a>
+          </p>
+
+          <p className="copyright">
+            © {new Date().getFullYear()} Martha Fashion. Tous droits réservés.
+          </p>
+        </footer>
+      </div>
+    </>
   );
 }
+
+const styles = `
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  background: #fffaf6;
+  color: #33272c;
+  font-family: Arial, sans-serif;
+}
+a {
+  text-decoration: none;
+  color: inherit;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+.site-container {
+  width: 100%;
+  overflow: hidden;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 6%;
+  background: white;
+  border-bottom: 1px solid #f0e5e8;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  background: #b87991;
+  color: white;
+  font-size: 23px;
+  font-weight: bold;
+}
+.logo strong,
+.logo small {
+  display: block;
+}
+.logo strong {
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+.logo small {
+  margin-top: 4px;
+  color: #987b86;
+}
+.header nav {
+  display: flex;
+  gap: 30px;
+  font-size: 14px;
+}
+.header nav a:hover {
+  color: #b87991;
+}
+.header-button,
+.primary-button,
+.whatsapp-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  padding: 13px 20px;
+  font-weight: bold;
+  transition: 0.2s;
+}
+.header-button,
+.primary-button {
+  background: #b68b4c;
+  color: white;
+}
+.header-button:hover,
+.primary-button:hover {
+  background: #956d36;
+}
+.offline-banner {
+  padding: 12px;
+  background: #fff0d8;
+  color: #76521e;
+  text-align: center;
+  font-size: 13px;
+}
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  min-height: 430px;
+  padding: 70px 8%;
+  background: linear-gradient(120deg, #f6e9ed, #fffaf6);
+}
+.hero-content {
+  max-width: 570px;
+}
+.eyebrow {
+  color: #b68b4c;
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.hero h1 {
+  margin: 18px 0;
+  font-family: Georgia, serif;
+  font-size: clamp(38px, 6vw, 65px);
+  line-height: 1.1;
+}
+.hero-content p,
+.intro p,
+.contact-section p {
+  color: #76666c;
+  line-height: 1.8;
+}
+.hero-decoration {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 270px;
+  height: 270px;
+  flex-shrink: 0;
+  border: 1px solid #b68b4c;
+  border-radius: 50%;
+  color: #b87991;
+}
+.hero-decoration span {
+  font-family: Georgia, serif;
+  font-size: 95px;
+}
+.hero-decoration p {
+  color: #8b6d78;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+.intro,
+.contact-section {
+  max-width: 800px;
+  margin: auto;
+  padding: 75px 25px;
+  text-align: center;
+}
+.intro h2,
+.section-heading h2,
+.contact-section h2 {
+  margin: 12px 0;
+  font-family: Georgia, serif;
+  font-size: 34px;
+}
+.shop-section {
+  padding: 50px 6% 80px;
+  background: white;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 30px;
+}
+.product-count {
+  color: #987b86;
+  font-size: 13px;
+}
+.products-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 25px;
+}
+.product-card {
+  overflow: hidden;
+  border: 1px solid #f0e5e8;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 5px 20px rgba(70, 40, 50, 0.05);
+}
+.product-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: #f5edf0;
+}
+.product-media img,
+.product-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.no-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  color: #987b86;
+  font-size: 14px;
+}
+.media-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 35px;
+  height: 35px;
+  border: 0;
+  border-radius: 50%;
+  background: white;
+  color: #5a3e49;
+  font-size: 20px;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  z-index: 2;
+}
+.media-previous {
+  left: 10px;
+}
+.media-next {
+  right: 10px;
+}
+.media-counter {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.9);
+  font-size: 12px;
+}
+.product-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: #b87991;
+  color: white;
+  font-size: 11px;
+  z-index: 2;
+}
+.product-info {
+  padding: 20px;
+}
+.product-category {
+  color: #b68b4c;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.product-info h3 {
+  margin: 9px 0;
+  font-family: Georgia, serif;
+  font-size: 20px;
+}
+.product-description {
+  color: #82747a;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.product-price {
+  margin: 15px 0 5px;
+  color: #a36f82;
+  font-size: 19px;
+  font-weight: bold;
+}
+.old-price {
+  color: #999;
+  font-size: 13px;
+  text-decoration: line-through;
+}
+.add-cart-button,
+.whatsapp-button {
+  width: 100%;
+  margin-top: 10px;
+}
+.whatsapp-button {
+  border: 1px solid #278b58;
+  background: white;
+  color: #278b58;
+  font-size: 13px;
+}
+.whatsapp-button:hover {
+  background: #278b58;
+  color: white;
+}
+.status-message {
+  padding: 20px;
+  color: #76666c;
+  text-align: center;
+}
+.error-message {
+  color: #b23b45;
+}
+.contact-section {
+  padding-top: 80px;
+  padding-bottom: 80px;
+}
+.footer {
+  padding: 40px 6%;
+  background: #382a31;
+  color: white;
+  text-align: center;
+  line-height: 1.8;
+}
+.footer strong {
+  color: #e0bd81;
+  letter-spacing: 2px;
+}
+.footer a {
+  color: #e0bd81;
+}
+.copyright {
+  margin-top: 25px;
+  color: #c6b8be;
+  font-size: 12px;
+}
+@media (max-width: 850px) {
+  .products-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hero {
+    padding: 55px 5%;
+  }
+  .hero-decoration {
+    width: 210px;
+    height: 210px;
+  }
+  .hero-decoration span {
+    font-size: 75px;
+  }
+}
+@media (max-width: 600px) {
+  .header {
+    flex-wrap: wrap;
+    padding: 14px 15px;
+  }
+  .header nav {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    gap: 20px;
+    overflow-x: auto;
+  }
+  .header nav a {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .header-button {
+    padding: 10px 13px;
+    font-size: 12px;
+  }
+  .hero {
+    flex-direction: column;
+    text-align: center;
+  }
+  .hero-decoration {
+    width: 180px;
+    height: 180px;
+  }
+  .hero-decoration span {
+    font-size: 65px;
+  }
+  .products-grid {
+    grid-template-columns: 1fr;
+  }
+  .shop-section {
+    padding: 40px 15px;
+  }
+  .section-heading h2 {
+    font-size: 27px;
+  }
+  .intro h2,
+  .contact-section h2 {
+    font-size: 28px;
+  }
+}
+`;
